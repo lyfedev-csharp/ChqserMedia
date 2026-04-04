@@ -99,7 +99,8 @@ Key configurable elements:
 
 ## 📸 Preview
 
-> *(NONE YET)*
+![ChqserMedia Preview One](assets/preview1.png)
+![ChqserMedia Preview Two](assets/preview2.png)
 
 ---
 
