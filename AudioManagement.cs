@@ -70,20 +70,6 @@ namespace ChqserMedia
             }
         }
 
-        public static Dictionary<string, AudioClip> audioFilePool = new Dictionary<string, AudioClip>();
-
-        public static void PlaySoundFromURL(string resourcePath, string fileName, bool heil = false)
-        {
-            if (instance == null)
-            {
-                var audioManagerObject = new GameObject("AudioManagement");
-                instance = audioManagerObject.AddComponent<AudioManagement>();
-            }
-
-            var clip = LoadAudioFromURL(resourcePath, fileName);
-            if (clip != null) instance.PlayClip(clip, heil);
-        }
-
         private void PlayClip(AudioClip clip, bool heil)
         {
             if (source == null)
@@ -97,101 +83,6 @@ namespace ChqserMedia
             sourcer.volume = heil ? 0.04f : 0.5f;
             sourcer.Play();
             Destroy(sourcer, clip.length + 0.5f);
-        }
-
-        public static AudioClip LoadAudioFromFile(string filePath)
-        {
-            if (audioFilePool.TryGetValue(filePath, out var cachedClip))
-            {
-                if (cachedClip != null && cachedClip.loadState == AudioDataLoadState.Loaded) return cachedClip;
-
-                audioFilePool.Remove(filePath);
-            }
-
-            try
-            {
-                if (!File.Exists(filePath)) return null;
-
-                var fileData = File.ReadAllBytes(filePath);
-                var extension = Path.GetExtension(filePath).TrimStart('.').ToLower();
-                var audioType = GetAudioType(extension);
-
-                var tempPath = Path.Combine(UnityEngine.Application.temporaryCachePath, Path.GetFileName(filePath));
-                File.WriteAllBytes(tempPath, fileData);
-
-                var fileUri = "file:///" + tempPath.Replace("\\", "/");
-                var request = UnityWebRequestMultimedia.GetAudioClip(fileUri, audioType);
-                var handler = (DownloadHandlerAudioClip)request.downloadHandler;
-                handler.streamAudio = false;
-
-                var operation = request.SendWebRequest();
-                while (!operation.isDone) Thread.Sleep(10);
-
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    request.Dispose();
-                    if (File.Exists(tempPath)) File.Delete(tempPath);
-                    return null;
-                }
-
-                var clip = DownloadHandlerAudioClip.GetContent(request);
-                if (clip == null || clip.loadState != AudioDataLoadState.Loaded)
-                {
-                    request.Dispose();
-                    if (File.Exists(tempPath)) File.Delete(tempPath);
-                    return null;
-                }
-
-                audioFilePool.Add(filePath, clip);
-                request.Dispose();
-                if (File.Exists(tempPath)) File.Delete(tempPath);
-                return clip;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        public static string Folder => Path.Combine(Directory.GetParent(UnityEngine.Application.dataPath).FullName, "ChqserMedia");
-
-        public static string MenuSounds =>
-            Path.Combine(Directory.GetParent(UnityEngine.Application.dataPath).FullName, Folder, "Menu Sounds");
-
-        public static AudioClip LoadAudioFromURL(string resourcePath, string fileName)
-        {
-            var filePath = Path.Combine(MenuSounds, fileName);
-
-            if (audioFilePool.TryGetValue(filePath, out var cachedClip))
-            {
-                if (cachedClip != null && cachedClip.loadState == AudioDataLoadState.Loaded) return cachedClip;
-
-                audioFilePool.Remove(filePath);
-            }
-
-            var directory = Path.GetDirectoryName(filePath);
-            if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
-
-            if (!File.Exists(filePath))
-                using (var stream = new WebClient())
-                {
-                    stream.DownloadFile(resourcePath, filePath);
-                }
-
-            return LoadAudioFromFile(filePath);
-        }
-
-        private static AudioType GetAudioType(string extension)
-        {
-            switch (extension)
-            {
-                case "mp3": return AudioType.MPEG;
-                case "wav": return AudioType.WAV;
-                case "ogg": return AudioType.OGGVORBIS;
-                case "aiff":
-                case "aif": return AudioType.AIFF;
-                default: return AudioType.UNKNOWN;
-            }
         }
     }
 }

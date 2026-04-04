@@ -1,5 +1,4 @@
 ﻿using BepInEx;
-using Chqser.Classes;
 
 namespace ChqserMedia
 {

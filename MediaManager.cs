@@ -51,7 +51,14 @@ namespace ChqserMedia
         private Texture2D oldThumbnail;
 
         private List<(float time, string line)> lyricLines = new List<(float, string)>();
+        private string[] prebuiltLyricFrames;
         private float updateDataLatency;
+        private float fastPollUntil;
+        private int lastLyricIndex = -1;
+
+        private const float LyricLookahead = 2f;
+        private const int LinesAbove = 1;
+        private const int LinesBelow = 3;
 
         private class PendingMediaData
         {
@@ -81,7 +88,6 @@ namespace ChqserMedia
             using Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream(ExeResourceName);
             if (s == null)
             {
-                UnityEngine.Debug.LogError($"[MediaManager] Resource not found: {ExeResourceName}");
                 return;
             }
 
@@ -94,8 +100,6 @@ namespace ChqserMedia
 
         public void Initialize(AssetBundle bundle)
         {
-            UnityEngine.Debug.Log($"[MediaManager] Initialize called on instance {GetInstanceID()}, GameObject: {gameObject.name}");
-
             Transform root = Menu.MenuInstance.transform;
 
             thumbnailImage = root.Find("Background/Thumbnail")?.GetComponent<Image>();
@@ -117,9 +121,6 @@ namespace ChqserMedia
             skipGradient = skipButton?.gameObject.AddComponent<UIGradient>();
             prevGradient = prevButton?.gameObject.AddComponent<UIGradient>();
             playGradient = playButton?.gameObject.AddComponent<UIGradient>();
-
-            UnityEngine.Debug.Log($"[MediaManager] thumbnailImage={(thumbnailImage != null ? "FOUND" : "NULL")}");
-            UnityEngine.Debug.Log($"[MediaManager] songNameText={(songNameText != null ? "FOUND" : "NULL")}");
         }
 
         public void OnEnable()
@@ -127,8 +128,6 @@ namespace ChqserMedia
             updateDataLatency = 0f;
             fastPollUntil = Time.time + 3f;
         }
-
-        private float fastPollUntil;
 
         public void Update()
         {
@@ -180,10 +179,7 @@ namespace ChqserMedia
             {
                 Instance?.ParseMediaData(output);
             }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogError($"[MediaManager] Parse error: {ex.Message}");
-            }
+            catch { }
         }
 
         private void ParseMediaData(string json)
@@ -229,6 +225,8 @@ namespace ChqserMedia
             if (songChanged)
             {
                 lyricLines.Clear();
+                prebuiltLyricFrames = null;
+                lastLyricIndex = -1;
                 if (lyricsText != null) lyricsText.text = "";
                 _ = FetchLyrics(Title, Artist);
             }
@@ -248,9 +246,6 @@ namespace ChqserMedia
             Task task = UpdateDataAsync();
             while (!task.IsCompleted)
                 yield return null;
-
-            if (task.IsFaulted)
-                UnityEngine.Debug.LogError($"[MediaManager] Update failed: {task.Exception?.Message}");
         }
 
         private void UpdateProgressBar()
@@ -275,26 +270,45 @@ namespace ChqserMedia
         {
             try
             {
-                string url = $"https://lrclib.net/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
-                using HttpClient http = new HttpClient();
-                string json = await http.GetStringAsync(url);
-                var result = JsonConvert.DeserializeObject<LyricsResponse>(json);
-                if (result != null && !string.IsNullOrEmpty(result.syncedLyrics))
-                    ParseLyrics(result.syncedLyrics);
-                else if (result != null && !string.IsNullOrEmpty(result.plainLyrics))
+                string safeName = $"{title}_{artist}".Replace(" ", "_");
+                foreach (char c in Path.GetInvalidFileNameChars()) safeName = safeName.Replace(c, '_');
+                string cacheFile = Path.Combine(Path.GetTempPath(), $"lrc_{safeName}.txt");
+
+                string lrc = null;
+
+                if (File.Exists(cacheFile))
                 {
-                    if (lyricsText != null) lyricsText.text = result.plainLyrics;
+                    lrc = await Task.Run(() => File.ReadAllText(cacheFile));
                 }
+                else
+                {
+                    string url = $"https://lrclib.net/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
+                    using HttpClient http = new HttpClient();
+                    string json = await http.GetStringAsync(url);
+                    var result = JsonConvert.DeserializeObject<LyricsResponse>(json);
+
+                    if (result != null && !string.IsNullOrEmpty(result.syncedLyrics))
+                    {
+                        lrc = result.syncedLyrics;
+                        await Task.Run(() => File.WriteAllText(cacheFile, lrc));
+                    }
+                    else if (result != null && !string.IsNullOrEmpty(result.plainLyrics))
+                    {
+                        if (lyricsText != null) lyricsText.text = $"<color=#909090>{result.plainLyrics}</color>";
+                        return;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(lrc))
+                    ParseLyrics(lrc);
             }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogWarning($"[MediaManager] Lyrics error: {ex.Message}");
-            }
+            catch { }
         }
 
         private void ParseLyrics(string lrc)
         {
             lyricLines.Clear();
+
             foreach (string line in lrc.Split('\n'))
             {
                 if (line.Length < 10 || line[0] != '[') continue;
@@ -309,22 +323,41 @@ namespace ChqserMedia
                         System.Globalization.CultureInfo.InvariantCulture, out float secs))
                     lyricLines.Add((mins * 60f + secs, text));
             }
-            RebuildLyricsDisplay();
+
+            PreBuildLyricFrames();
         }
 
-        private void RebuildLyricsDisplay()
+        private void PreBuildLyricFrames()
         {
-            lastLyricIndex = -1;
-        }
+            lastLyricIndex = -2;
+            prebuiltLyricFrames = new string[lyricLines.Count];
 
-        private int lastLyricIndex = -1;
-        private const float LyricLookahead = 2f;
-        private const int LinesAbove = 1;
-        private const int LinesBelow = 3;
+            for (int active = 0; active < lyricLines.Count; active++)
+            {
+                int start = Mathf.Max(0, active - LinesAbove);
+                int end = Mathf.Min(lyricLines.Count - 1, active + LinesBelow);
+
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                for (int i = start; i <= end; i++)
+                {
+                    if (string.IsNullOrWhiteSpace(lyricLines[i].line)) continue;
+
+                    if (i == active)
+                        sb.AppendLine($"<color=#FFFFFF><size=105%>{lyricLines[i].line}</size></color>");
+                    else
+                    {
+                        int distance = Mathf.Abs(i - active);
+                        string hex = distance == 1 ? "#909090" : distance == 2 ? "#606060" : "#404040";
+                        sb.AppendLine($"<color={hex}>{lyricLines[i].line}</color>");
+                    }
+                }
+                prebuiltLyricFrames[active] = sb.ToString();
+            }
+        }
 
         private void UpdateLyrics()
         {
-            if (lyricsText == null || lyricLines.Count == 0) return;
+            if (lyricsText == null || lyricLines.Count == 0 || prebuiltLyricFrames == null) return;
 
             int currentIndex = -1;
             float adjustedPosition = Position + LyricLookahead;
@@ -339,26 +372,8 @@ namespace ChqserMedia
             if (currentIndex == lastLyricIndex) return;
             lastLyricIndex = currentIndex;
 
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-
-            int start = Mathf.Max(0, currentIndex - LinesAbove);
-            int end = Mathf.Min(lyricLines.Count - 1, currentIndex + LinesBelow);
-
-            for (int i = start; i <= end; i++)
-            {
-                if (string.IsNullOrWhiteSpace(lyricLines[i].line)) continue;
-
-                if (i == currentIndex)
-                    sb.AppendLine($"<color=#FFFFFF><size=105%>{lyricLines[i].line}</size></color>");
-                else
-                {
-                    int distance = Mathf.Abs(i - currentIndex);
-                    string hex = distance == 1 ? "#909090" : distance == 2 ? "#606060" : "#404040";
-                    sb.AppendLine($"<color={hex}>{lyricLines[i].line}</color>");
-                }
-            }
-
-            lyricsText.text = sb.ToString();
+            if (currentIndex >= 0 && currentIndex < prebuiltLyricFrames.Length)
+                lyricsText.text = prebuiltLyricFrames[currentIndex];
         }
 
         private void LoadThumbnail(string base64)
@@ -376,10 +391,7 @@ namespace ChqserMedia
                 if (thumbnailImage != null) thumbnailImage.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
                 ApplyThumbnailColors(tex);
             }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogError($"[MediaManager] Thumbnail error: {ex.Message}");
-            }
+            catch { }
         }
 
         private void ApplyThumbnailColors(Texture2D tex)

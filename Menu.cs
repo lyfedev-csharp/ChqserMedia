@@ -1,5 +1,4 @@
 ﻿using BepInEx;
-using Chqser.Classes;
 using GorillaLocomotion;
 using GorillaNetworking;
 using HarmonyLib;
