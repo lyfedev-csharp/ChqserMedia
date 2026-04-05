@@ -80,8 +80,8 @@ namespace ChqserMedia
         private const float LyricLookahead = 2f;
 
         // how many lines above and below the current line to show
-        private const int LinesAbove = 1;
-        private const int LinesBelow = 3;
+        private const int LinesAbove = 2;
+        private const int LinesBelow = 4;
 
         // apple music uses an em-dash separator: "artist — album"
         // we strip the album portion so lyrics are fetched by artist name only
@@ -163,8 +163,8 @@ namespace ChqserMedia
             if (lyricsText != null)
             {
                 lyricsText.enableAutoSizing = true;
-                lyricsText.fontSizeMin = 6f;
-                lyricsText.fontSizeMax = 14f;
+                lyricsText.fontSizeMin = 20f;
+                lyricsText.fontSizeMax = 26f;
                 lyricsText.overflowMode = TextOverflowModes.Overflow;
                 lyricsText.enableWordWrapping = true;
             }
