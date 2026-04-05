@@ -45,11 +45,18 @@ ChqserMedia is designed to feel like a natural extension of the user—especiall
 ---
 
 ## 🛠️ Tech Stack
-
 * Unity (UI System / World Space Canvas)
 * C#
 * AssetBundles (for modular UI & assets)
-* Optional native integrations (e.g., Windows media APIs)
+* [GTMediaController](https://github.com/lyfedev-csharp/GTMediaController) (native Windows media session bridge)
+
+---
+
+## 🔌 Native Bridge
+
+ChqserMedia uses [GTMediaController](https://github.com/lyfedev-csharp/GTMediaController) as a native Windows bridge to read the system media session.
+
+GTMediaController is a lightweight C++ CLI that queries the Windows Global System Media Transport Controls and returns track info, playback state, and album art as JSON — allowing ChqserMedia to display real-time media data from any app on your system (Spotify, browsers, Windows Media Player, etc).
 
 ---
 
@@ -128,7 +135,3 @@ Feel free to use, modify, and distribute.
 ChqserMedia is built for performance and visual clarity—keeping distractions low while giving you full control over your media experience.
 
 ---
-
-* a **logo/banner for the README**
-* a **GIF mockup of the wrist UI**
-* or tailor this README specifically for **VRChat / Gorilla Tag / BepInEx setup**
