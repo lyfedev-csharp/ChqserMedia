@@ -76,7 +76,7 @@ namespace ChqserMedia
         {
             try
             {
-                bool toggle = SteamVR_Actions.gorillaTag_RightJoystickClick.GetState(SteamVR_Input_Sources.RightHand);
+                bool toggle = SteamVR_Actions.gorillaTag_LeftPrimaryClick.GetState(SteamVR_Input_Sources.LeftHand);
                 if (toggle && Time.time > MenuOpenDelay)
                 {
                     MenuOpenDelay = Time.time + 0.3f;
@@ -91,6 +91,7 @@ namespace ChqserMedia
                             if (animationRoutine != null) instance.StopCoroutine(animationRoutine);
                             animationRoutine = instance.StartCoroutine(ScaleAnimation(Vector3.zero, TargetScale));
                             SafePlaySound("Open.mp3");
+                            mediaManager?.ForceRefresh();
                         }
                         else
                         {
@@ -105,7 +106,7 @@ namespace ChqserMedia
                 if (MenuOpen && MenuInstance != null && Pointer != null)
                 {
                     Transform hand = GTPlayer.Instance.leftHand.controllerTransform;
-                    MenuInstance.transform.position = hand.position + hand.rotation * new Vector3(0.05f, 0f, 0f);
+                    MenuInstance.transform.position = hand.position + (Vector3.forward * 0.1f) + hand.rotation * new Vector3(0.05f, 0f, 0f);
                     MenuInstance.transform.rotation = hand.rotation * Quaternion.Euler(-180f, -90f, -90f);
 
                     HandleInteraction();
@@ -181,6 +182,7 @@ namespace ChqserMedia
             {
                 e += Time.deltaTime;
                 MenuInstance.transform.localScale = Vector3.Lerp(start, end, e / d);
+                mediaManager?.ForceRefresh();
                 yield return null;
             }
             MenuInstance.transform.localScale = end;

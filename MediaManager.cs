@@ -145,6 +145,8 @@ namespace ChqserMedia
                 pendingData = null;
             }
 
+            if (!Menu.MenuOpen) return;
+
             if (!Paused && Duration > 0f)
             {
                 Position += Time.deltaTime;
@@ -155,6 +157,14 @@ namespace ChqserMedia
 
             if (lyricLines.Count > 0)
                 UpdateLyrics();
+        }
+
+        public void ForceRefresh()
+        {
+            lastLyricIndex = -2;
+            UpdateProgressBar();
+            UpdateTimestamps();
+            UpdateLyrics();
         }
 
         public static async Task UpdateDataAsync()
