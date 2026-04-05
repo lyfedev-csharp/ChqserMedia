@@ -15,6 +15,7 @@
     <None Remove="Resources\Close.mp3" />
     <None Remove="Resources\GTMediaController.exe" />
     <None Remove="Resources\Open.mp3" />
+    <None Remove="Resources\websocket-sharp.dll" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,6 +24,7 @@
     <EmbeddedResource Include="Resources\chqsermedia" />
     <EmbeddedResource Include="Resources\GTMediaController.exe" />
     <EmbeddedResource Include="Resources\Open.mp3" />
+    <EmbeddedResource Include="Resources\websocket-sharp.dll" />
   </ItemGroup>
 
   <!-- AssemblyPublicizer usage inspired from GorillaShirts -->

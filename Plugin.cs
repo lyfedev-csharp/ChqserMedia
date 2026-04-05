@@ -11,6 +11,7 @@ namespace ChqserMedia
             GorillaTagger.OnPlayerSpawned(OnPlayerSpawned);
             gameObject.AddComponent<Menu>();
             gameObject.AddComponent<AudioManagement>();
+            gameObject.AddComponent<ChqserNetwork>();
         }
 
         public void OnPlayerSpawned() =>
