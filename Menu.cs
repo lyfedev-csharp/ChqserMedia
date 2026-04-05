@@ -106,7 +106,7 @@ namespace ChqserMedia
                 if (MenuOpen && MenuInstance != null && Pointer != null)
                 {
                     Transform hand = GTPlayer.Instance.leftHand.controllerTransform;
-                    MenuInstance.transform.position = hand.position + (Vector3.forward * 0.1f) + hand.rotation * new Vector3(0.05f, 0f, 0f);
+                    MenuInstance.transform.position = hand.position + hand.rotation * new Vector3(0.05f, 0f, 0f);
                     MenuInstance.transform.rotation = hand.rotation * Quaternion.Euler(-180f, -90f, -90f);
 
                     HandleInteraction();
