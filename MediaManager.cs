@@ -26,17 +26,17 @@ namespace ChqserMedia
         public static float Position { get; private set; }
         public static float Duration { get; private set; }
 
-        // path where the helper exe is written at runtime
+        // path on disk where the helper exe is written when the game starts
         public static string ExePath { get; private set; }
 
-        // singleton so static methods can reach instance members
+        // the single instance of this class so other scripts can call it
         public static MediaManager Instance { get; private set; }
 
-        // the exe is baked into the dll as an embedded resource
+        // the helper exe is stored inside the dll and extracted at runtime
         private const string ExeResourceName = "ChqserMedia.Resources.GTMediaController.exe";
         private const string ExeFileName = "GTMediaController.exe";
 
-        // ui references — all found by path in initialize
+        // ui elements found by path in the scene hierarchy
         private Image thumbnailImage;
         private TextMeshProUGUI songNameText;
         private TextMeshProUGUI songArtistText;
@@ -50,45 +50,51 @@ namespace ChqserMedia
         private Image prevButton;
         private Image playButton;
 
-        // gradient components added at runtime to tint the ui from the album art
+        // the spotify browser ui elements that also get the album color gradient
+        private Image spotifyButtonImage;
+        private Image spotifyPlaylistPanelImage;
+        private Image spotifyTrackPanelImage;
+
+        // gradient components added at runtime to tint each ui element
         private UIGradient backgroundGradient;
         private UIGradient skipGradient;
         private UIGradient prevGradient;
         private UIGradient playGradient;
+        private UIGradient spotifyButtonGradient;
+        private UIGradient spotifyPlaylistPanelGradient;
+        private UIGradient spotifyTrackPanelGradient;
 
-        // sprites loaded from the asset bundle
+        // the play and pause icons loaded from the asset bundle
         private Sprite playSprite;
         private Sprite pauseSprite;
 
-        // kept so we can destroy the old texture before loading a new one
+        // the previous thumbnail texture so we can destroy it before loading a new one
         private Texture2D oldThumbnail;
 
-        // parsed lrc lines — each entry is a timestamp and the lyric text
+        // each entry is a timestamp (in seconds) and the lyric text for that moment
         private List<(float time, string line)> lyricLines = new List<(float, string)>();
 
-        // pre-built strings for each lyric position so we don't rebuild every frame
+        // one pre-built string per lyric position so we only build them once
         private string[] prebuiltLyricFrames;
 
-        // controls how often we poll the helper exe
+        // controls how often we ask the helper exe for new data
         private float updateDataLatency;
         private float fastPollUntil;
 
-        // tracks which lyric line is currently shown to avoid redundant updates
+        // tracks which lyric line is showing so we don't update unnecessarily
         private int lastLyricIndex = -1;
 
-        // how many seconds ahead of the timestamp we show the next lyric
+        // show the lyric slightly before its actual timestamp so it feels natural
         private const float LyricLookahead = 2f;
 
-        // how many lines above and below the current line to show
+        // how many lyric lines to show above and below the current one
         private const int LinesAbove = 2;
         private const int LinesBelow = 4;
 
-        // apple music uses an em-dash separator: "artist — album"
-        // we strip the album portion so lyrics are fetched by artist name only
+        // apple music puts the album name after an em-dash in the artist field
         private const string AppleMusicSeparator = " \u2014 ";
 
-        // data from the helper exe is written here on a background thread
-        // then read and applied on the main thread in update
+        // data collected on a background thread, then applied on the main thread
         private class PendingMediaData
         {
             public string Title;
@@ -100,10 +106,10 @@ namespace ChqserMedia
             public string ThumbnailBase64;
         }
 
-        // volatile so the main thread always sees the latest write
+        // volatile so the main thread always sees the freshest value
         private volatile PendingMediaData pendingData = null;
 
-        // matches the json shape returned by lrclib
+        // matches the json shape that lrclib returns
         private class LyricsResponse
         {
             public string syncedLyrics { get; set; }
@@ -114,16 +120,13 @@ namespace ChqserMedia
         {
             Instance = this;
 
-            // extract the helper exe from the dll to a temp path so we can run it
+            // extract the helper exe from inside the dll to a temp folder so we can run it
             ExePath = Path.Combine(Path.GetTempPath(), ExeFileName);
 
             using Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream(ExeResourceName);
-            if (s == null)
-            {
-                return;
-            }
+            if (s == null) return;
 
-            // overwrite any stale version from a previous session
+            // always overwrite so we don't run a stale version from last session
             if (File.Exists(ExePath))
                 File.Delete(ExePath);
 
@@ -133,9 +136,9 @@ namespace ChqserMedia
 
         public void Initialize(AssetBundle bundle)
         {
-            // find all the ui elements by their hierarchy path
             Transform root = Menu.MenuInstance.transform;
 
+            // find every ui element we need by its path in the hierarchy
             thumbnailImage = root.Find("Background/Thumbnail")?.GetComponent<Image>();
             songNameText = root.Find("Background/SongName")?.GetComponent<TextMeshProUGUI>();
             songArtistText = root.Find("Background/SongArtist")?.GetComponent<TextMeshProUGUI>();
@@ -149,17 +152,25 @@ namespace ChqserMedia
             playPauseIcon = root.Find("Background/Play/Icon")?.GetComponent<Image>();
             playButton = root.Find("Background/Play")?.GetComponent<Image>();
 
-            // load the play and pause sprites from the bundle
+            // find the spotify browser panels so we can tint them with the album color too
+            spotifyButtonImage = root.Find("Background/SpotifyButton")?.GetComponent<Image>();
+            spotifyPlaylistPanelImage = root.Find("Background/SpotifyPlaylistPanel")?.GetComponent<Image>();
+            spotifyTrackPanelImage = root.Find("Background/SpotifyTrackPanel")?.GetComponent<Image>();
+
+            // load the play and pause sprites from the asset bundle
             playSprite = bundle.LoadAsset<Sprite>("play");
             pauseSprite = bundle.LoadAsset<Sprite>("pause");
 
-            // add gradient components so we can tint them from the album art later
+            // add gradient components to every image that should receive the album tint
             backgroundGradient = backgroundImage?.gameObject.AddComponent<UIGradient>();
             skipGradient = skipButton?.gameObject.AddComponent<UIGradient>();
             prevGradient = prevButton?.gameObject.AddComponent<UIGradient>();
             playGradient = playButton?.gameObject.AddComponent<UIGradient>();
+            spotifyButtonGradient = spotifyButtonImage?.gameObject.AddComponent<UIGradient>();
+            spotifyPlaylistPanelGradient = spotifyPlaylistPanelImage?.gameObject.AddComponent<UIGradient>();
+            spotifyTrackPanelGradient = spotifyTrackPanelImage?.gameObject.AddComponent<UIGradient>();
 
-            // let the lyrics box shrink text to fit rather than overflow or clip
+            // let the lyrics text shrink to fit without clipping
             if (lyricsText != null)
             {
                 lyricsText.enableAutoSizing = true;
@@ -172,14 +183,14 @@ namespace ChqserMedia
 
         public void OnEnable()
         {
-            // reset timers so we poll immediately when the component turns on
+            // reset timers so we poll right away when the component is switched on
             updateDataLatency = 0f;
             fastPollUntil = Time.time + 3f;
         }
 
         public void Update()
         {
-            // poll faster right after a song change, slower otherwise
+            // poll faster just after a song change, slower when nothing is happening
             float interval = Time.time < fastPollUntil ? 1f : 5f;
 
             if (Time.time > updateDataLatency)
@@ -188,7 +199,7 @@ namespace ChqserMedia
                 StartCoroutine(UpdateDataCoroutine());
             }
 
-            // apply any data that arrived from the background thread
+            // if the background thread finished collecting data, apply it now
             if (pendingData != null)
             {
                 ApplyPendingData(pendingData);
@@ -197,7 +208,7 @@ namespace ChqserMedia
 
             if (!Menu.MenuOpen) return;
 
-            // tick the position forward ourselves so the bar moves smoothly
+            // advance the playback position ourselves so the progress bar moves smoothly
             if (!Paused && Duration > 0f)
             {
                 Position += Time.deltaTime;
@@ -212,16 +223,16 @@ namespace ChqserMedia
 
         public void ForceRefresh()
         {
-            // force lyric and progress updates — used when the menu first opens
+            // force everything to redraw immediately, used when the menu first opens
             lastLyricIndex = -2;
             UpdateProgressBar();
             UpdateTimestamps();
             UpdateLyrics();
         }
 
+        // run the helper exe and collect its output asynchronously
         public static async Task UpdateDataAsync()
         {
-            // run the helper exe and read its json output
             ProcessStartInfo psi = new ProcessStartInfo
             {
                 FileName = ExePath,
@@ -238,13 +249,11 @@ namespace ChqserMedia
 
             if (string.IsNullOrEmpty(output)) return;
 
-            try
-            {
-                Instance?.ParseMediaData(output);
-            }
+            try { Instance?.ParseMediaData(output); }
             catch { }
         }
 
+        // read the json from the helper exe and store it for the main thread to apply
         private void ParseMediaData(string json)
         {
             Dictionary<string, object> data = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
@@ -252,11 +261,9 @@ namespace ChqserMedia
             string newTitle = GetString(data, "Title");
             string rawArtist = GetString(data, "Artist");
 
-            // apple music formats the artist field as "artistname — albumname"
-            // strip the album so we only send the real artist name to lyric lookups
+            // apple music adds " — albumname" after the artist, strip it off
             string newArtist = StripAppleMusicAlbum(rawArtist);
 
-            // store the result so the main thread can pick it up in update
             pendingData = new PendingMediaData
             {
                 Title = newTitle,
@@ -269,8 +276,7 @@ namespace ChqserMedia
             };
         }
 
-        // apple music reports the artist field as "{artistName} — {albumName}"
-        // this strips everything after the em-dash so lyrics fetch correctly
+        // strip everything after the em-dash that apple music adds to the artist field
         private static string StripAppleMusicAlbum(string raw)
         {
             if (string.IsNullOrEmpty(raw)) return raw;
@@ -278,11 +284,12 @@ namespace ChqserMedia
             return idx >= 0 ? raw.Substring(0, idx).Trim() : raw;
         }
 
+        // apply the collected data to the ui (must run on the main thread)
         private void ApplyPendingData(PendingMediaData d)
         {
             bool songChanged = d.SongChanged;
 
-            // poll more aggressively for a few seconds after a track change
+            // poll faster for a bit after the song changes
             if (songChanged)
                 fastPollUntil = Time.time + 5f;
 
@@ -302,15 +309,15 @@ namespace ChqserMedia
 
             if (songChanged)
             {
-                // clear old lyric data and kick off a new fetch
+                // clear old lyrics and kick off a fresh fetch for the new song
                 lyricLines.Clear();
                 prebuiltLyricFrames = null;
                 lastLyricIndex = -1;
                 if (lyricsText != null) lyricsText.text = "";
-                _ = FetchLyrics(Title, Artist);
+                _ = FetchLyricsForTrack(Title, Artist);
             }
 
-            // clear the thumbnail if the song changed and no new one arrived yet
+            // blank the thumbnail when the song changes and no new image has arrived yet
             if (songChanged && string.IsNullOrEmpty(d.ThumbnailBase64))
                 if (thumbnailImage != null) thumbnailImage.sprite = null;
 
@@ -318,41 +325,44 @@ namespace ChqserMedia
                 LoadThumbnail(d.ThumbnailBase64);
         }
 
+        // coroutine wrapper so the rest of the game keeps running while we wait
         public IEnumerator UpdateDataCoroutine(float delay = 0f)
         {
             if (delay > 0f)
                 yield return new WaitForSeconds(delay);
 
-            // wait for the async task without blocking the main thread
             Task task = UpdateDataAsync();
             while (!task.IsCompleted)
                 yield return null;
         }
 
+        // move the progress bar fill to match how far through the track we are
         private void UpdateProgressBar()
         {
             if (progressFill == null || Duration <= 0f) return;
             progressFill.fillAmount = Mathf.Clamp01(Position / Duration);
         }
 
+        // update the two timestamp labels (current position and total length)
         private void UpdateTimestamps()
         {
             if (timeStampStartText != null) timeStampStartText.text = FormatTime(Position);
             if (timeStampEndText != null) timeStampEndText.text = FormatTime(Duration);
         }
 
+        // swap between the play and pause icons depending on the current state
         private void UpdatePlayPauseIcon()
         {
             if (playPauseIcon == null) return;
-            // show play when paused, pause when playing
             playPauseIcon.sprite = Paused ? playSprite : pauseSprite;
         }
 
-        private async Task FetchLyrics(string title, string artist)
+        // download lyrics for the current track (uses a local cache to avoid repeat requests)
+        public async Task FetchLyricsForTrack(string title, string artist)
         {
             try
             {
-                // build a safe filename from the title and artist for caching
+                // build a safe filename so we can cache the lyrics on disk
                 string safeName = $"{title}_{artist}".Replace(" ", "_");
                 foreach (char c in Path.GetInvalidFileNameChars()) safeName = safeName.Replace(c, '_');
                 string cacheFile = Path.Combine(Path.GetTempPath(), $"lrc_{safeName}.txt");
@@ -361,7 +371,7 @@ namespace ChqserMedia
 
                 if (File.Exists(cacheFile))
                 {
-                    // load from disk instead of hitting the api again
+                    // load from cache instead of hitting the api again
                     lrc = await Task.Run(() => File.ReadAllText(cacheFile));
                 }
                 else
@@ -373,13 +383,13 @@ namespace ChqserMedia
 
                     if (result != null && !string.IsNullOrEmpty(result.syncedLyrics))
                     {
-                        // synced lyrics have timestamps — prefer these
+                        // synced lyrics have timestamps so they scroll with the song
                         lrc = result.syncedLyrics;
                         await Task.Run(() => File.WriteAllText(cacheFile, lrc));
                     }
                     else if (result != null && !string.IsNullOrEmpty(result.plainLyrics))
                     {
-                        // no timestamps available, just show the plain text
+                        // no timestamps available, show the full lyrics statically
                         if (lyricsText != null) lyricsText.text = $"<color=#909090>{result.plainLyrics}</color>";
                         return;
                     }
@@ -391,11 +401,11 @@ namespace ChqserMedia
             catch { }
         }
 
+        // turn the raw lrc text into a list of (timestamp, text) pairs
         private void ParseLyrics(string lrc)
         {
             lyricLines.Clear();
 
-            // each line looks like "[mm:ss.xx] lyric text"
             foreach (string line in lrc.Split('\n'))
             {
                 if (line.Length < 10 || line[0] != '[') continue;
@@ -414,9 +424,9 @@ namespace ChqserMedia
             PreBuildLyricFrames();
         }
 
+        // build one ready-to-display string for each lyric position so we don't rebuild every frame
         private void PreBuildLyricFrames()
         {
-            // build one string per lyric line so updating the text is just an assignment
             lastLyricIndex = -2;
             prebuiltLyricFrames = new string[lyricLines.Count];
 
@@ -431,7 +441,7 @@ namespace ChqserMedia
                     if (string.IsNullOrWhiteSpace(lyricLines[i].line)) continue;
 
                     if (i == active)
-                        // current line is white and slightly larger
+                        // highlight the current line in white and slightly bigger
                         sb.AppendLine($"<color=#FFFFFF><size=105%>{lyricLines[i].line}</size></color>");
                     else
                     {
@@ -445,11 +455,12 @@ namespace ChqserMedia
             }
         }
 
+        // every frame, check if we've moved to a new lyric line and update the text if so
         private void UpdateLyrics()
         {
             if (lyricsText == null || lyricLines.Count == 0 || prebuiltLyricFrames == null) return;
 
-            // find the last line whose timestamp we've passed (with lookahead)
+            // find the last line whose timestamp we've reached (slightly ahead for feel)
             int currentIndex = -1;
             float adjustedPosition = Position + LyricLookahead;
             for (int i = 0; i < lyricLines.Count; i++)
@@ -460,7 +471,7 @@ namespace ChqserMedia
                     break;
             }
 
-            // skip the update if the line hasn't changed
+            // no change, skip the update
             if (currentIndex == lastLyricIndex) return;
             lastLyricIndex = currentIndex;
 
@@ -468,6 +479,7 @@ namespace ChqserMedia
                 lyricsText.text = prebuiltLyricFrames[currentIndex];
         }
 
+        // decode the base64 thumbnail, create a texture, and display it
         private void LoadThumbnail(string base64)
         {
             if (string.IsNullOrEmpty(base64)) return;
@@ -475,7 +487,7 @@ namespace ChqserMedia
             {
                 byte[] bytes = Convert.FromBase64String(base64);
 
-                // destroy the previous texture to free gpu memory
+                // free the previous texture from gpu memory before creating a new one
                 if (oldThumbnail != null) Destroy(oldThumbnail);
 
                 Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
@@ -492,22 +504,23 @@ namespace ChqserMedia
             catch { }
         }
 
+        // sample the album art and apply a matching gradient tint to all ui panels
         private void ApplyThumbnailColors(Texture2D tex)
         {
             if (tex == null) return;
 
-            // scale down to 32x32 so averaging the color is cheap
+            // scale to a tiny image so averaging is cheap
             Texture2D small = ScaleDown(tex, 32);
             Color[] pixels = small.GetPixels();
             Destroy(small);
 
-            // average all the pixels to get the dominant color
+            // average every pixel to find the dominant color
             float r = 0, g = 0, b = 0;
             foreach (Color c in pixels) { r += c.r; g += c.g; b += c.b; }
             int count = pixels.Length;
             Color avg = new Color(r / count, g / count, b / count);
 
-            // top is lighter, bottom is darker — gives a natural gradient feel
+            // lighter at the top, darker at the bottom
             Color top = Color.Lerp(avg, Color.white, 0.3f);
             Color bottom = Color.Lerp(avg, Color.black, 0.5f);
 
@@ -516,16 +529,23 @@ namespace ChqserMedia
             if (skipButton != null) skipButton.color = Color.white;
             if (prevButton != null) prevButton.color = Color.white;
             if (playButton != null) playButton.color = Color.white;
+            if (spotifyButtonImage != null) spotifyButtonImage.color = Color.white;
+            if (spotifyPlaylistPanelImage != null) spotifyPlaylistPanelImage.color = Color.white;
+            if (spotifyTrackPanelImage != null) spotifyTrackPanelImage.color = Color.white;
 
+            // apply the gradient to each element
             backgroundGradient?.SetColors(top, bottom);
             skipGradient?.SetColors(top, bottom);
             prevGradient?.SetColors(top, bottom);
             playGradient?.SetColors(top, bottom);
+            spotifyButtonGradient?.SetColors(top, bottom);
+            spotifyPlaylistPanelGradient?.SetColors(top, bottom);
+            spotifyTrackPanelGradient?.SetColors(top, bottom);
         }
 
+        // blit to a render texture then read back the pixels to create a smaller copy
         private Texture2D ScaleDown(Texture2D src, int size = 32)
         {
-            // blit to a render texture then read the pixels back into a new texture
             RenderTexture rt = RenderTexture.GetTemporary(size, size);
             Graphics.Blit(src, rt);
             RenderTexture prev = RenderTexture.active;
@@ -538,11 +558,13 @@ namespace ChqserMedia
             return result;
         }
 
+        // safely read a string value from the data dictionary
         private static string GetString(Dictionary<string, object> data, string key)
         {
             return data.TryGetValue(key, out object value) ? value?.ToString() ?? "" : "";
         }
 
+        // safely read a float value from the data dictionary
         private static float GetFloat(Dictionary<string, object> data, string key)
         {
             if (data.TryGetValue(key, out object value))
@@ -550,14 +572,15 @@ namespace ChqserMedia
             return 0f;
         }
 
+        // turn a number of seconds into a "m:ss" string
         private string FormatTime(float seconds)
         {
-            // turns a raw second count into "m:ss"
             int m = (int)seconds / 60;
             int s = (int)seconds % 60;
             return $"{m}:{s:D2}";
         }
 
+        // toggle play/pause and send the media key to the os
         public void PauseTrack()
         {
             Paused = !Paused;
@@ -565,9 +588,9 @@ namespace ChqserMedia
             UpdatePlayPauseIcon();
         }
 
+        // jump to the previous track
         public void PreviousTrack()
         {
-            // speed up polling and reset position, then send the media key
             fastPollUntil = Time.time + 5f;
             updateDataLatency = 0f;
             StartCoroutine(UpdateDataCoroutine(0.1f));
@@ -575,9 +598,9 @@ namespace ChqserMedia
             SendKey(VirtualKeyCodes.PREVIOUS_TRACK);
         }
 
+        // jump to the next track
         public void SkipTrack()
         {
-            // same as previous but sends the next track key
             fastPollUntil = Time.time + 5f;
             updateDataLatency = 0f;
             StartCoroutine(UpdateDataCoroutine(0.1f));
@@ -585,12 +608,12 @@ namespace ChqserMedia
             SendKey(VirtualKeyCodes.NEXT_TRACK);
         }
 
-        // calls the win32 keyboard input api to send a media key
+        // call the windows api to press a keyboard key
         [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
         internal static extern void keybd_event(uint bVk, uint bScan, uint dwFlags, uint dwExtraInfo);
         internal static void SendKey(VirtualKeyCodes code) => keybd_event((uint)code, 0, 0, 0);
 
-        // virtual key codes for the three media keys we need
+        // the three media key codes we need
         internal enum VirtualKeyCodes : uint
         {
             NEXT_TRACK = 0xB0,

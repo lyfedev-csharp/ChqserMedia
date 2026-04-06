@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="Resources\chqsermedia" />
     <None Remove="Resources\Click.mp3" />
     <None Remove="Resources\Close.mp3" />
     <None Remove="Resources\GTMediaController.exe" />
@@ -19,9 +20,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Resources\chqsermedia" />
     <EmbeddedResource Include="Resources\Click.mp3" />
     <EmbeddedResource Include="Resources\Close.mp3" />
-    <EmbeddedResource Include="Resources\chqsermedia" />
     <EmbeddedResource Include="Resources\GTMediaController.exe" />
     <EmbeddedResource Include="Resources\Open.mp3" />
     <EmbeddedResource Include="Resources\websocket-sharp.dll" />

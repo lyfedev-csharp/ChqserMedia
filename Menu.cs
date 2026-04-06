@@ -48,7 +48,7 @@ namespace ChqserMedia
         private static MediaManager mediaManager;
 
         // maps each button gameobject to the action it should run when pressed
-        private static Dictionary<GameObject, Action> utilityButtons = new Dictionary<GameObject, Action>();
+        internal static Dictionary<GameObject, Action> utilityButtons = new Dictionary<GameObject, Action>();
 
         void Awake()
         {
@@ -94,6 +94,9 @@ namespace ChqserMedia
                     mediaManager = MenuInstance.AddComponent<MediaManager>();
                     mediaManager.Initialize(loadedBundle);
 
+                    SpotifyBrowser spotifyBrowser = MenuInstance.AddComponent<SpotifyBrowser>();
+                    spotifyBrowser.Initialize(MenuInstance.transform);
+
                     // register the three control buttons with their actions
                     SetupUtility("Background/Skip", () => mediaManager.SkipTrack());
                     SetupUtility("Background/Prev", () => mediaManager.PreviousTrack());
@@ -137,6 +140,7 @@ namespace ChqserMedia
                             // cancel any inprogress open animation before closing
                             if (animationRoutine != null) StopCoroutine(animationRoutine);
                             animationRoutine = StartCoroutine(ScaleAnimation(MenuInstance.transform.localScale, Vector3.zero, true));
+                            SpotifyBrowser.Instance?.OnMenuClosed();
                             SafePlaySound("Close.mp3");
                         }
                     }
@@ -275,6 +279,20 @@ namespace ChqserMedia
         {
             // wrapped in try/catch so a missing sound file doesn't crash anything
             try { AudioManagement.PlaySound(name); } catch { }
+        }
+
+        public static void RegisterButton(GameObject go, Action act)
+        {
+            // easily adds/sets up a button anywhere in the menu by providing the gameobject and action to run when it's pressed
+            if (go != null && act != null)
+                utilityButtons[go] = act;
+        }
+
+        public static void UnregisterButton(GameObject go)
+        {
+            // removes a button from the menu and destroys its collider so it can't be pressed anymore
+            if (go != null)
+                utilityButtons.Remove(go);
         }
     }
 }
