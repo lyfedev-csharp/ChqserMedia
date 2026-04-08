@@ -1,13 +1,16 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.Windows.Speech;
 using Valve.VR;
 using Debug = UnityEngine.Debug;
 
@@ -66,6 +69,16 @@ namespace ChqserMedia
         // height of one row in pixels
         private float _rowHeight = 86f;
 
+        // voice search state for "press A to speak" track search
+        private bool _aWasDown;
+        private bool _voiceListening;
+        private float _voiceCooldownUntil;
+        private Coroutine _voiceTimeoutRoutine;
+        private KeywordRecognizer _voiceCommandRecognizer;
+        private readonly Dictionary<string, int> _voicePhraseToTrackIndex =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private const float VoiceTimeoutSeconds = 5f;
+
         public static SpotifyBrowser Instance { get; private set; }
 
         void Awake() => Instance = this;
@@ -103,6 +116,7 @@ namespace ChqserMedia
             if (_view == View.Hidden) return;
             ReadJoystickScroll();
             ApplySmoothScroll();
+            HandleVoiceSearchInput();
         }
 
         // read the right stick and move the scroll target, faster if trigger or grip is held
@@ -347,14 +361,17 @@ namespace ChqserMedia
                     _trSub[i].text = $"{_tracks[i].Artist}  •  {FormatMs(_tracks[i].Duration)}";
                 }
             }
+
+            if (_tracks.Count > 0 && !_voiceListening)
+                SetText(_trStatus, "Press A to speak and find a song.");
         }
 
         // tell spotify to start playing this track, fetch lyrics, then close the browser
         private void SelectTrack(SpotifyTrack track)
         {
-            _ = SpotifyClient.PlayTrackAsync(track.Uri);
+            _ = SpotifyClient.PlayTrackAsync(track.Uri, _activePlaylist?.Id);
             MediaManager.Instance?.FetchLyricsForTrack(track.Name, track.Artist);
-            HideAll();
+            SetText(_trStatus, $"Playing {track.Name}");
             MediaManager.Instance?.StartCoroutine(
                 MediaManager.Instance.UpdateDataCoroutine(1.5f));
         }
@@ -376,6 +393,247 @@ namespace ChqserMedia
         }
 
         public void OnMenuClosed() => HideAll();
+
+        private void OnDestroy()
+        {
+            StopVoiceListening(false);
+            DisposeVoiceRecognizer();
+        }
+
+        // detect A-button press on right controller while track list is open
+        private void HandleVoiceSearchInput()
+        {
+            if (_view != View.Tracks || _loading || _tracks.Count == 0) return;
+
+            bool aDown = false;
+            try
+            {
+                aDown = SteamVR_Actions.gorillaTag_RightPrimaryClick
+                    .GetState(SteamVR_Input_Sources.RightHand);
+            }
+            catch { return; }
+
+            if (aDown && !_aWasDown && !_voiceListening && Time.time >= _voiceCooldownUntil)
+            {
+                StartVoiceListening();
+            }
+
+            _aWasDown = aDown;
+        }
+
+        private void StartVoiceListening()
+        {
+            BuildVoiceTrackPhraseMap();
+            if (_voicePhraseToTrackIndex.Count == 0)
+            {
+                SetText(_trStatus, "No usable track names for voice search.");
+                return;
+            }
+
+            DisposeVoiceRecognizer();
+            try
+            {
+                if (PhraseRecognitionSystem.Status == SpeechSystemStatus.Stopped)
+                    PhraseRecognitionSystem.Restart();
+            }
+            catch { }
+
+            _voiceCommandRecognizer = new KeywordRecognizer(
+                _voicePhraseToTrackIndex.Keys.ToArray(),
+                ConfidenceLevel.Low);
+            _voiceCommandRecognizer.OnPhraseRecognized += OnVoiceTrackRecognized;
+
+            _voiceListening = true;
+            _voiceCooldownUntil = Time.time + 1f;
+            SetText(_trStatus, "Speak now to find a song...");
+
+            try
+            {
+                _voiceCommandRecognizer.Start();
+                Debug.Log($"[SpotifyBrowser] Voice listening started with {_voicePhraseToTrackIndex.Count} phrases.");
+            }
+            catch
+            {
+                SetText(_trStatus, "Voice search failed to start.");
+                StopVoiceListening(false);
+                return;
+            }
+
+            if (_voiceTimeoutRoutine != null) StopCoroutine(_voiceTimeoutRoutine);
+            _voiceTimeoutRoutine = StartCoroutine(VoiceTimeoutRoutine());
+        }
+
+        private void OnVoiceTrackRecognized(PhraseRecognizedEventArgs args)
+        {
+            if (!_voiceListening) return;
+
+            string spoken = args.text?.Trim() ?? "";
+            Debug.Log($"[SpotifyBrowser] Voice recognized: \"{spoken}\"");
+            if (string.IsNullOrEmpty(spoken))
+            {
+                SetText(_trStatus, "Didn't hear a song. Press A and try again.");
+                StopVoiceListening();
+                return;
+            }
+
+            int trackIndex = ResolveRecognizedTrackIndex(spoken);
+            if (trackIndex < 0 || trackIndex >= _tracks.Count)
+            {
+                SetText(_trStatus, $"No close match for \"{spoken}\".");
+                StopVoiceListening();
+                return;
+            }
+
+            SpotifyTrack match = _tracks[trackIndex];
+            SetText(_trStatus, $"Heard \"{spoken}\". Playing {match.Name}.");
+
+            float targetY = -(trackIndex * _rowHeight);
+            _trTargetY = Mathf.Clamp(targetY, _trMinY, 0f);
+            _trCurrentY = _trTargetY;
+            RenderTracks();
+
+            SelectTrack(match);
+            StopVoiceListening(false);
+        }
+
+        private int ResolveRecognizedTrackIndex(string spoken)
+        {
+            if (_voicePhraseToTrackIndex.TryGetValue(spoken, out int idx))
+                return idx;
+
+            string spokenNorm = NormalizeForMatch(spoken);
+            for (int i = 0; i < _tracks.Count; i++)
+            {
+                string nameNorm = NormalizeForMatch(_tracks[i].Name);
+                string artistNorm = NormalizeForMatch(_tracks[i].Artist);
+                if (spokenNorm == nameNorm || spokenNorm == $"{nameNorm} by {artistNorm}".Trim())
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private void BuildVoiceTrackPhraseMap()
+        {
+            _voicePhraseToTrackIndex.Clear();
+
+            for (int i = 0; i < _tracks.Count; i++)
+            {
+                string title = NormalizeForMatch(_tracks[i].Name);
+                string artist = NormalizeForMatch(_tracks[i].Artist);
+                if (string.IsNullOrEmpty(title)) continue;
+
+                AddTrackPhrase(title, i);
+                AddTrackPhrase($"play {title}", i);
+
+                // Add simple aliases so exact keyword matching is less strict.
+                string shortTitle = SimplifyTrackTitle(title);
+                if (!string.IsNullOrEmpty(shortTitle) && shortTitle != title)
+                {
+                    AddTrackPhrase(shortTitle, i);
+                    AddTrackPhrase($"play {shortTitle}", i);
+                }
+
+                if (!string.IsNullOrEmpty(artist))
+                {
+                    AddTrackPhrase($"{title} by {artist}", i);
+                    AddTrackPhrase($"play {title} by {artist}", i);
+                }
+            }
+        }
+
+        private void AddTrackPhrase(string phrase, int index)
+        {
+            string key = phrase.Trim();
+            if (key.Length < 2) return;
+            if (!_voicePhraseToTrackIndex.ContainsKey(key))
+                _voicePhraseToTrackIndex[key] = index;
+        }
+
+        private IEnumerator VoiceTimeoutRoutine()
+        {
+            yield return new WaitForSeconds(VoiceTimeoutSeconds);
+            if (!_voiceListening) yield break;
+            SetText(_trStatus, "Voice timed out. Press A and try again.");
+            StopVoiceListening();
+        }
+
+        private void StopVoiceListening(bool resetStatus = true)
+        {
+            _voiceListening = false;
+
+            if (_voiceTimeoutRoutine != null)
+            {
+                StopCoroutine(_voiceTimeoutRoutine);
+                _voiceTimeoutRoutine = null;
+            }
+
+            if (_voiceCommandRecognizer != null && _voiceCommandRecognizer.IsRunning)
+            {
+                try { _voiceCommandRecognizer.Stop(); } catch { }
+            }
+
+            if (resetStatus && _view == View.Tracks && _tracks.Count > 0)
+                SetText(_trStatus, "Press A to speak and find a song.");
+        }
+
+        private void DisposeVoiceRecognizer()
+        {
+            if (_voiceCommandRecognizer == null) return;
+            try { _voiceCommandRecognizer.OnPhraseRecognized -= OnVoiceTrackRecognized; } catch { }
+            try { _voiceCommandRecognizer.Stop(); } catch { }
+            try { _voiceCommandRecognizer.Dispose(); } catch { }
+            _voiceCommandRecognizer = null;
+        }
+
+        private static string NormalizeForMatch(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return "";
+
+            var sb = new StringBuilder(input.Length);
+            for (int i = 0; i < input.Length; i++)
+            {
+                char c = char.ToLowerInvariant(input[i]);
+                if (char.IsLetterOrDigit(c) || char.IsWhiteSpace(c))
+                    sb.Append(c);
+                else
+                    sb.Append(' ');
+            }
+
+            string cleaned = sb.ToString();
+            while (cleaned.Contains("  "))
+                cleaned = cleaned.Replace("  ", " ");
+            return cleaned.Trim();
+        }
+
+        private static string SimplifyTrackTitle(string title)
+        {
+            if (string.IsNullOrEmpty(title)) return "";
+
+            string result = title;
+
+            int paren = result.IndexOf('(');
+            if (paren > 0) result = result.Substring(0, paren).Trim();
+
+            int bracket = result.IndexOf('[');
+            if (bracket > 0) result = result.Substring(0, bracket).Trim();
+
+            int dash = result.IndexOf(" - ", StringComparison.Ordinal);
+            if (dash > 0) result = result.Substring(0, dash).Trim();
+
+            string[] cutWords = { " feat ", " featuring ", " ft " };
+            for (int i = 0; i < cutWords.Length; i++)
+            {
+                int idx = result.IndexOf(cutWords[i], StringComparison.Ordinal);
+                if (idx > 0)
+                {
+                    result = result.Substring(0, idx).Trim();
+                    break;
+                }
+            }
+
+            return result;
+        }
 
         // find all the child objects in a panel and wire up the buttons
         private void SetupPanel(

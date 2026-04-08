@@ -1,4 +1,4 @@
-﻿using ChqserMedia;
+using ChqserMedia;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -25,6 +25,8 @@ namespace ChqserMedia
         public static bool ValidData { get; private set; }
         public static float Position { get; private set; }
         public static float Duration { get; private set; }
+        public static Color CurrentGradientTop { get; private set; } = Color.white;
+        public static Color CurrentGradientBottom { get; private set; } = Color.black;
 
         // path on disk where the helper exe is written when the game starts
         public static string ExePath { get; private set; }
@@ -154,8 +156,8 @@ namespace ChqserMedia
 
             // find the spotify browser panels so we can tint them with the album color too
             spotifyButtonImage = root.Find("Background/SpotifyButton")?.GetComponent<Image>();
-            spotifyPlaylistPanelImage = root.Find("Background/SpotifyPlaylistPanel")?.GetComponent<Image>();
-            spotifyTrackPanelImage = root.Find("Background/SpotifyTrackPanel")?.GetComponent<Image>();
+            spotifyPlaylistPanelImage = root.Find("SpotifyPlaylistPanel")?.GetComponent<Image>();
+            spotifyTrackPanelImage = root.Find("SpotifyTrackPanel")?.GetComponent<Image>();
 
             // load the play and pause sprites from the asset bundle
             playSprite = bundle.LoadAsset<Sprite>("play");
@@ -526,19 +528,11 @@ namespace ChqserMedia
 
             // reset base colors to white so the gradient tints cleanly
             if (backgroundImage != null) backgroundImage.color = Color.white;
-            if (skipButton != null) skipButton.color = Color.white;
-            if (prevButton != null) prevButton.color = Color.white;
-            if (playButton != null) playButton.color = Color.white;
-            if (spotifyButtonImage != null) spotifyButtonImage.color = Color.white;
             if (spotifyPlaylistPanelImage != null) spotifyPlaylistPanelImage.color = Color.white;
             if (spotifyTrackPanelImage != null) spotifyTrackPanelImage.color = Color.white;
 
             // apply the gradient to each element
             backgroundGradient?.SetColors(top, bottom);
-            skipGradient?.SetColors(top, bottom);
-            prevGradient?.SetColors(top, bottom);
-            playGradient?.SetColors(top, bottom);
-            spotifyButtonGradient?.SetColors(top, bottom);
             spotifyPlaylistPanelGradient?.SetColors(top, bottom);
             spotifyTrackPanelGradient?.SetColors(top, bottom);
         }

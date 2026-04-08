@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
@@ -201,8 +201,8 @@ namespace ChqserMedia
             return code;
         }
 
-        // tell spotify to start playing a specific track uri
-        public static async Task PlayTrackAsync(string trackUri)
+        // tell spotify to start playing a track, optionally inside a playlist context
+        public static async Task PlayTrackAsync(string trackUri, string playlistId = null)
         {
             string token = await GetTokenAsync();
             if (token == null) return;
@@ -210,9 +210,22 @@ namespace ChqserMedia
             var req = new HttpRequestMessage(HttpMethod.Put,
                 "https://api.spotify.com/v1/me/player/play");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Content = new StringContent(
-                $"{{\"uris\":[\"{trackUri}\"]}}",
-                Encoding.UTF8, "application/json");
+            string payload;
+
+            // using context_uri + offset keeps playback anchored to the playlist
+            // so next/previous and queue position don't reset to a single track context.
+            if (!string.IsNullOrEmpty(playlistId))
+            {
+                string playlistUri = $"spotify:playlist:{playlistId}";
+                payload =
+                    $"{{\"context_uri\":\"{playlistUri}\",\"offset\":{{\"uri\":\"{trackUri}\"}}}}";
+            }
+            else
+            {
+                payload = $"{{\"uris\":[\"{trackUri}\"]}}";
+            }
+
+            req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
             HttpResponseMessage res = await Http.SendAsync(req);
             if (!res.IsSuccessStatusCode)
